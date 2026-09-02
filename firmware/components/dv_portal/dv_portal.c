@@ -647,8 +647,6 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
         else if (!strcmp(source_text, "bambu")) source = DC_SRC_BAMBU;
         else if (!strcmp(source_text, "none")) source = DC_SRC_NONE;
         else { snprintf(message, message_size, "Unknown control source"); return ESP_ERR_INVALID_ARG; }
-        esp_err_t err = dc_source_set(source);
-        if (err != ESP_OK) return err;
     }
     const char *mk_host = string_value(values, "moonraker_host");
     if (mk_host) {
@@ -666,8 +664,23 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
         snprintf(config.host, sizeof(config.host), "%s", bb_host);
         const char *serial = string_value(values, "bambu_serial"); if (serial) snprintf(config.serial, sizeof(config.serial), "%s", serial);
         const char *code = string_value(values, "bambu_code"); if (code && *code) snprintf(config.code, sizeof(config.code), "%s", code);
+        if (source == DC_SRC_BAMBU && (!config.host[0] || !config.serial[0] || !config.code[0])) {
+            snprintf(message, message_size, "Choose a printer and enter its LAN access code");
+            return ESP_ERR_INVALID_ARG;
+        }
         esp_err_t err = dc_bambu_set_config(&config);
         if (err != ESP_OK) return err;
+    }
+    esp_err_t source_err = dc_source_set(source);
+    if (source_err != ESP_OK) return source_err;
+    if (source == DC_SRC_BAMBU) {
+        esp_err_t err = dc_bambu_start();
+        if (err != ESP_OK) {
+            snprintf(message, message_size, "Saved, but Bambu could not start: %s", esp_err_to_name(err));
+            return err;
+        }
+    } else {
+        dc_bambu_stop();
     }
     // Blank means "unchanged" (the field is never pre-filled, so every save would
     // otherwise clear it); a single "-" is the explicit clear.
@@ -699,7 +712,10 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
         dv_policy_set_thresholds((float)open_c, (float)close_c) != ESP_OK) {
         snprintf(message, message_size, "Open temperature must be above close temperature"); return ESP_ERR_INVALID_ARG;
     }
-    snprintf(message, message_size, "Settings saved. Restart to apply a source change.");
+    snprintf(message, message_size,
+             source == DC_SRC_BAMBU ? "Settings saved. Connecting to Bambu now." :
+             source == DC_SRC_NONE ? "Settings saved and applied." :
+             "Settings saved. Restart to start the Klipper source.");
     return ESP_OK;
 }
 
